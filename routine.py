@@ -9,7 +9,7 @@ estrae i sottotitoli (EN + IT) e salva ogni video come file .md.
 import os
 import re
 import time
-import tempfile
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -23,10 +23,6 @@ KEYWORDS = [
     "AI news",
     "large language models",
     "Claude",
-    "Claude Code",
-    "Routine",
-    "NotebookLM",
-    "ChatGPT",
 ]
 MAX_RESULTS = 20          # video per keyword
 OUTPUT_DIR = "output"     # cartella di output
@@ -42,26 +38,20 @@ def sanitize_filename(title: str) -> str:
 
 
 def search_youtube(keyword: str, max_results: int) -> list[dict]:
+    """Cerca video YouTube usando yt-dlp (non richiede API key)."""
     print(f"🔍 Ricerca: '{keyword}' (max {max_results} video)...")
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": True,
+        "skip_download": True,
         "nocheckcertificate": True,
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-        },
-        "extractor_args": {"youtube": {"player_client": ["web"]}},
     }
-    search_url = f"ytsearch{max_results}:{keyword}"
+    query = f"ytsearch{max_results}:{keyword}"
     videos = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
-            info = ydl.extract_info(search_url, download=False)
+            info = ydl.extract_info(query, download=False)
             for entry in info.get("entries", []):
                 if not entry:
                     continue
@@ -70,19 +60,19 @@ def search_youtube(keyword: str, max_results: int) -> list[dict]:
                     "id": vid_id,
                     "title": entry.get("title", "Senza titolo"),
                     "url": f"https://www.youtube.com/watch?v={vid_id}",
-                    "channel": entry.get("uploader", "Sconosciuto"),
+                    "channel": entry.get("uploader") or entry.get("channel", "Sconosciuto"),
                     "published": entry.get("upload_date", ""),
                     "duration": str(entry.get("duration", "")),
                 })
         except Exception as e:
-            print(f"  ⚠️  Errore nella ricerca: {e}")
+            print(f"  ⚠️  Errore ricerca '{keyword}': {e}")
     return videos
 
 
 def extract_subtitles(video_url: str, lang: str) -> str:
     """
     Scarica i sottotitoli in una lingua specifica.
-    Prova prima i sottotitoli umani, poi quelli auto-generati.
+    Prova prima quelli umani, poi gli auto-generati.
     """
     ydl_opts = {
         "skip_download": True,
@@ -90,6 +80,7 @@ def extract_subtitles(video_url: str, lang: str) -> str:
         "writeautomaticsub": True,
         "subtitleslangs": [lang],
         "subtitlesformat": "vtt",
+        "outtmpl": "/tmp/yt_sub_%(id)s",
         "quiet": True,
         "no_warnings": True,
         "nocheckcertificate": True,
@@ -119,8 +110,7 @@ def extract_subtitles(video_url: str, lang: str) -> str:
             if not vtt_url:
                 return ""
 
-            import urllib.request
-            vtt_path = os.path.join(tempfile.gettempdir(), f"yt_sub_{video_id}_{lang}.vtt")
+            vtt_path = f"/tmp/yt_sub_{video_id}_{lang}.vtt"
             urllib.request.urlretrieve(vtt_url, vtt_path)
 
             text = parse_vtt(vtt_path)
